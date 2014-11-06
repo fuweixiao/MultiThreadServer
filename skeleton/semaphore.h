@@ -14,6 +14,6 @@ int mysem_wait(struct m_sem_t *sem);
 
 int mysem_post(struct m_sem_t *sem);
 
-int mtsem_destroy(struct m_sem_t *sem);
+int mysem_destroy(struct m_sem_t *sem);
 
 #endif

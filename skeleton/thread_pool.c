@@ -36,7 +36,48 @@ struct pool_t {
 
 static void *thread_do_work(void *pool);
 
+void queue_add_task(pool_task_t* queue, pool_task_t* task)
+{
+	if(!queue)
+	{
+		queue = task;
+		queue->next = queue;
+		queue->prev = queue;
+	}
+	else
+	{
+		task->next = queue;
+		task->prev = queue->prev;
+		queue->prev->next = task;
+		queue->prev = task;
+	}
+}
 
+pool_task_t* queue_remove_job(pool_task_t* queue)
+{
+	pool_task_t* task = queue;
+	if(queue == queue->next)
+		queue = NULL;
+	else
+	{
+		queue = queue->next;
+		queue->prev = task->prev;
+		task->prev->next = queue;
+	}
+	return task;
+}
+
+void queue_free(pool_task_t* queue)
+{
+	pool_task_t* cur = queue;
+	while(cur->next != cur)
+	{
+		cur = cur->next;
+		free(cur->prev);
+	}
+	free(cur);
+	return;
+}
 /*
  * Create a threadpool, initialize variables, etc
  *
@@ -52,6 +93,7 @@ pool_t *pool_create(int queue_size, int num_threads)
 	
 	// Create the queue
 	pool->queue = NULL;
+
 	// Create all threads
 	int i;	
 	for(i = 0; i < num_threads; i++)
@@ -61,6 +103,8 @@ pool_t *pool_create(int queue_size, int num_threads)
 	// Init mutex for queue
 	pthread_mutex_init(&pool->lock, NULL);
 	
+	// Init semaphore
+	mysem_init(pool->mysem, 0);
 	return NULL;
 }
 
@@ -73,21 +117,21 @@ int pool_add_task(pool_t *pool, void (*function)(void *), void *argument)
 {
     int err = 0;
 	struct pool_task *task;
+	// lock the queue
 	pthread_mutex_lock(&pool->lock);
-	if(pool->queue)
-	{
-		task = (struct pool_task*)malloc(sizeof(struct pool_task));
-		task-> function = function;
-		task-> argument = argument;
-		task->next = pool->queue;
-		mysem_post(pool->mysem);
-	}
-	else
-	{
-		err = -1;
-	}
+	
+	// add task to the queue
+	task = (struct pool_task*)malloc(sizeof(struct pool_task));
+	task-> function = function;
+	task-> argument = argument;
+	queue_add_task(pool->queue, task);
+	
+	// sem_post
+	mysem_post(pool->mysem);
+	
+	// unlock the queue
 	pthread_mutex_unlock(&pool->lock);
-    return err;
+	return err;
 }
 
 
@@ -99,7 +143,22 @@ int pool_add_task(pool_t *pool, void (*function)(void *), void *argument)
 int pool_destroy(pool_t *pool)
 {
     int err = 0;
- 
+	int i = 0;
+	// destroy treads
+	for (i = 0; i < pool->thread_count; i++)
+	{
+		pthread_cancel(*(pool->threads + i));
+	}
+
+	// destroy the semaphore and mutex
+	mysem_destroy(pool->mysem);
+	pthread_mutex_destroy(&pool->lock);
+
+	// free the memory	
+	queue_free(pool->queue);
+
+	// Destroy the threadpool
+	free(pool);
     return err;
 }
 
@@ -115,20 +174,23 @@ static void *thread_do_work(void *pool)
 	struct pool_task *task = NULL;	
 	while(1)
 	{
+		// sem_wait
 		mysem_wait(my_pool->mysem);	     
+		
+		// lock work queue
 		pthread_mutex_lock(&my_pool->lock);	
+		
+		// remove job from work queue
+		task = queue_remove_job(my_pool->queue);
+		
+		// unlock work queue
 		pthread_mutex_unlock(&my_pool->lock);
-		if(my_pool->queue)
-		{
-			task = my_pool->queue;
-			my_pool->queue = my_pool->queue->next;
-			if(my_pool->queue->prev)
-				my_pool->queue->prev = NULL;
-		}
+
+		// do work
 		task->function(task->argument);
 		free(task);
 	}
 
     pthread_exit(NULL);
-    return(NULL);
+    return NULL;
 }
