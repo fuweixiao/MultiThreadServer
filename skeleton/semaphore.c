@@ -1,13 +1,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <unistd.h>
-
-
-typedef struct m_sem_t {
-    pthread_mutex_t sem_mutex;
-	pthread_cond_t sem_cond;
-	int value;
-} m_sem_t;
+#include "semaphore.h"
 
 int sem_wait(m_sem_t *s);
 int sem_post(m_sem_t *s);
@@ -36,7 +30,7 @@ int mysem_clean(void* arg)
 int mysem_wait(m_sem_t *s)
 {
 	pthread_mutex_lock(&s->sem_mutex);
-    pthread_cleanup_push(mysem_clean, (void*)&s->sem_mutex);
+	pthread_cleanup_push(mysem_clean, (void*)&s->sem_mutex);
 	while(s->value <= 0)
 	{
 		pthread_cond_wait(&s->sem_cond,&s->sem_mutex);
